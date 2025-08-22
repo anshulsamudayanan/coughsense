@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Cough Sound Detector — Grouped Coughs</title>
+  <style>
+    :root { --ok:#2ecc71; --bad:#e74c3c; --bg:#f7f7f9; }
+    body { font-family: system-ui, Arial, sans-serif; background: var(--bg);
+           max-width: 780px; margin: 24px auto; padding: 16px; }
+    h1 { margin: 0 0 8px; }
+    .card { background:#fff; border-radius:12px; padding:14px; box-shadow:0 6px 18px rgba(0,0,0,0.06); margin:12px 0; }
+    button { padding:8px 12px; border-radius:10px; font-size:15px; cursor:pointer; }
+    button[disabled]{ opacity:0.6; cursor:not-allowed; }
+    .row{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    .fineprint{ font-size:13px; color:#666; margin-top:8px; }
+    #bigStatus{ font-weight:700; padding:8px 12px; border-radius:8px; display:inline-block; margin-top:10px; }
+    .status-ok{ background:#eafaf1; color:#1e7e34; border:1px solid #c6f1db; }
+    .status-bad{ background:#fdecea; color:#a71d2a; border:1px solid #f5c6cb; }
+    #bars{ margin-top:12px; }
+    .bar{ display:flex; align-items:center; gap:8px; margin:6px 0; }
+    .label{ min-width:120px; font-family:ui-monospace, Menlo, monospace; }
+    .track{ flex:1; height:12px; background:#eef2f5; border-radius:999px; overflow:hidden; }
+    .fill{ height:100%; width:0%; background:#9aa5b1; }
+  </style>
+  <!-- Teachable Machine audio library -->
+  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/audio@0.8/dist/teachablemachine-audio.min.js"></script>
+</head>
+<body>
+  <h1>🩺 Cough Sound Detector</h1>
+  <div class="fineprint"><strong>Learning demo only.</strong> Not medical advice. Ask an adult if someone is sick.</div>
+
+  <div class="card">
+    <div>1) Click <b>Start Microphone</b> • 2) Make a sound • 3) Watch the result</div>
+    <div class="row" style="margin-top:10px;">
+      <button id="startBtn">▶️ Start Microphone</button>
+      <button id="stopBtn" disabled>⏹ Stop</button>
+      <span style="padding:6px 10px; background:#eef1f5; border-radius:10px;">Works best with HTTPS</span>
+    </div>
+
+    <div style="margin-top:12px;">
+      <label>Threshold: <input id="thresh" type="range" min="0.50" max="0.90" step="0.05" value="0.60" />
+      <span id="threshVal">0.60</span></label>
+      <div class="fineprint">Slide higher to be stricter about calling something a cough.</div>
+    </div>
+
+    <div id="statusArea" style="margin-top:12px;">
+      <div id="bigStatus" class="status-ok">Result: NOT COUGH</div>
+      <div style="margin-top:8px;">Overall Cough %: <b id="coughPct">0%</b> • Top Cough Type: <b id="topCoughType">—</b> (<span id="topCoughPct">0%</span>)</div>
+    </div>
+
+    <div id="bars" class="card" style="margin-top:12px;">
+      <div class="fineprint">All class probabilities:</div>
+      <!-- Bars will be added here by script -->
+    </div>
+  </div>
+
+  <div class="fineprint">Privacy: audio is processed in your browser only (not uploaded). If anyone feels unwell, tell an adult and see a doctor.</div>
+
+  <script>
+    // <<< REPLACE this with your model base URL (must end with a '/') >>>
+    const MODEL_BASE_URL = "YOUR_MODEL_URL_HERE/"; // e.g. https://teachablemachine.withgoogle.com/models/ABC123/
+    const COUGH_PREFIX = "Cough"; // all class names that start with this are counted as cough-type
+
+    let model = null;
+    const startBtn = document.getElementById("startBtn");
+    const stopBtn  = document.getElementById("stopBtn");
+    const barsEl   = document.getElementById("bars");
+    const bigStatus= document.getElementById("bigStatus");
+    const coughPctEl = document.getElementById("coughPct");
+    const topCoughTypeEl = document.getElementById("topCoughType");
+    const topCoughPctEl  = document.getElementById("topCoughPct");
+    const threshSlider = document.getElementById("thresh");
+    const threshVal = document.getElementById("threshVal");
+
+    threshSlider.addEventListener("input", () => { threshVal.textContent = Number(threshSlider.value).toFixed(2); });
+
+    function ensureModelURL() {
+      if (!MODEL_BASE_URL || !MODEL_BASE_URL.endsWith("/")) {
+        alert("Please set MODEL_BASE_URL to your Teachable Machine model URL (must end with '/').");
+        throw new Error("Model URL missing or wrong.");
+      }
+    }
+
+    async function loadModel() {
+      ensureModelURL();
+      const modelURL = MODEL_BASE_URL + "model.json";
+      const metadataURL = MODEL_BASE_URL + "metadata.json";
+      model = await tmAudio.load(modelURL, metadataURL);
+      createBars(model.getClassLabels ? model.getClassLabels() : model.getTotalClasses());
+    }
+
+    function createBars(labelsOrCount) {
+      // Clear any existing
+      barsEl.querySelectorAll(".bar").forEach(el => el.remove());
+      let labels = Array.isArray(labelsOrCount) ? labelsOrCount : Array.from({length: labelsOrCount}, (_,i)=>"Class"+i);
+      labels.forEach(name => {
+        const row = document.createElement("div");
+        row.className = "bar";
+        const label = document.createElement("div");
+        label.className = "label";
+        label.textContent = name;
+        const track = document.createElement("div");
+        track.className = "track";
+        const fill = document.createElement("div");
+        fill.className = "fill";
+        track.appendChild(fill);
+        row.appendChild(label);
+        row.appendChild(track);
+        row.dataset.className = name;
+        barsEl.appendChild(row);
+      });
+    }
+
+    function setFill(className, pct) {
+      const row = Array.from(barsEl.querySelectorAll(".bar")).find(r => r.dataset.className === className);
+      if (row) row.querySelector(".fill").style.width = (pct*100).toFixed(0) + "%";
+    }
+
+    function updateUI(predictions) {
+      // Fill bars
+      predictions.forEach(p => setFill(p.className, p.probability));
+
+      // Group cough classes
+      const coughs = predictions.filter(p => p.className.startsWith(COUGH_PREFIX));
+      const coughSum = coughs.reduce((s,p)=>s+p.probability, 0);
+      const topCough = coughs.reduce((best,p)=>p.probability > (best?.probability||0) ? p : best, null);
+      coughPctEl.textContent = (coughSum*100).toFixed(0) + "%";
+      if (topCough) {
+        topCoughTypeEl.textContent = topCough.className;
+        topCoughPctEl.textContent = (topCough.probability*100).toFixed(0) + "%";
+      } else {
+        topCoughTypeEl.textContent = "—";
+        topCoughPctEl.textContent = "0%";
+      }
+
+      const threshold = parseFloat(threshSlider.value);
+      const isCough = coughSum >= threshold;
+      bigStatus.textContent = isCough ? "Result: COUGH" : "Result: NOT COUGH";
+      bigStatus.className = isCough ? "status-bad" : "status-ok";
+    }
+
+    async function startListening() {
+      if (!model) await loadModel();
+      // Ask for mic permission
+      await navigator.mediaDevices.getUserMedia({ audio: true });
+      await model.listen(preds => updateUI(preds), {
+        includeSpectrogram: true,
+        overlapFactor: 0.5,
+        probabilityThreshold: 0.0
+      });
+      startBtn.disabled = true;
+      stopBtn.disabled = false;
+    }
+
+    async function stopListening() {
+      if (model) {
+        await model.stopListening();
+        startBtn.disabled = false;
+        stopBtn.disabled = true;
+        bigStatus.textContent = "Result: NOT COUGH";
+        bigStatus.className = "status-ok";
+        coughPctEl.textContent = "0%";
+        topCoughTypeEl.textContent = "—";
+        topCoughPctEl.textContent = "0%";
+        barsEl.querySelectorAll(".fill").forEach(f => f.style.width = "0%");
+      }
+    }
+
+    startBtn.addEventListener("click", startListening);
+    stopBtn.addEventListener("click", stopListening);
+  </script>
+</body>
+</html>
